@@ -1362,7 +1362,7 @@ of `evil-inhibit-operator' from one local scope to another.")
 Using `evil-with-restriction' stores the previous values of
 `point-min' and `point-max' as a pair in this list.")
 
-(evil-define-local-var evil-markers-alist
+(defvar evil-global-marks-alist
   '((?\( . evil-backward-sentence)
     (?\) . evil-forward-sentence)
     (?{ . evil-backward-paragraph)
@@ -1382,6 +1382,8 @@ where STRING is a file path and NUMBER is a buffer position.
 The global value of this variable holds markers available from
 every buffer, while the buffer-local value holds markers available
 only in the current buffer.")
+
+(defvar evil-local-marks (make-hash-table :test 'equal))
 
 (defconst evil-suppress-map (make-keymap)
   "Full keymap disabling default bindings to `self-insert-command'.")

@@ -730,7 +730,7 @@ Columns are counted from zero."
   :keep-visual t
   :repeat nil
   :type exclusive
-  (interactive (list (read-char)))
+  (interactive (list (evil-read-mark)))
   (let ((marker (evil-get-marker char)))
     (cond
      ((markerp marker)
@@ -754,7 +754,7 @@ Columns are counted from zero."
   :keep-visual t
   :repeat nil
   :type line
-  (interactive (list (read-char)))
+  (interactive (list (evil-read-mark)))
   (evil-goto-mark char noerror)
   (evil-first-non-blank))
 
@@ -3085,21 +3085,21 @@ If MRKS is non-nil it should be a string and only registers
 corresponding to the characters of this string are shown."
   :repeat nil
   (interactive "<a>")
-  ;; To get markers and positions, we can't rely on 'global-mark-ring'
-  ;; provided by Emacs (although it will be much simpler and faster),
-  ;; because 'global-mark-ring' does not store mark characters, but
-  ;; only buffer name and position. Instead, 'evil-markers-alist' is
-  ;; used; this is list maintained by Evil for each buffer.
   (let ((all-markers
          ;; get global and local marks
-         (append (cl-remove-if (lambda (m)
-                                 (or (evil-global-marker-p (car m))
-                                     (not (markerp (cdr m)))))
-                               evil-markers-alist)
-                 (cl-remove-if (lambda (m)
-                                 (or (not (evil-global-marker-p (car m)))
-                                     (not (markerp (cdr m)))))
-                               (default-value 'evil-markers-alist)))))
+         (mapcar (lambda (el) (cons (car el) (evil-mark.pos (cdr el))))
+                 (append (cl-remove-if
+                          (lambda (m)
+                            (or (evil-global-marker-p (car m))
+                                (not (evil-mark-p (cdr m)))
+                                (not (markerp (evil-mark.pos (cdr m))))))
+                          (gethash (buffer-name) evil-local-marks))
+                         (cl-remove-if
+                          (lambda (m)
+                            (or (not (evil-global-marker-p (car m)))
+                                (not (evil-mark-p (cdr m)))
+                                (not (markerp (evil-mark.pos (cdr m))))))
+                          evil-global-marks-alist)))))
     (when mrks
       (setq mrks (string-to-list mrks))
       (setq all-markers (cl-delete-if (lambda (m)
@@ -3146,10 +3146,11 @@ If FORCE is non-nil all local marks except 0-9 are removed.
   (cond
    ;; delete local marks except 0-9
    (force
-    (setq evil-markers-alist
-          (cl-delete-if (lambda (m)
-                          (not (and (>= (car m) ?0) (<= (car m) ?9))))
-                        evil-markers-alist)))
+    (puthash (buffer-name)
+             (cl-delete-if (lambda (m)
+                             (not (and (>= (car m) ?0) (<= (car m) ?9))))
+                           (gethash (buffer-name) evil-local-marks))
+             evil-local-marks))
    (t
     (let ((i 0)
           (n (length marks))
@@ -3179,12 +3180,13 @@ If FORCE is non-nil all local marks except 0-9 are removed.
           (push (aref marks i) delmarks)
           (cl-incf i))))
       ;; now remove all marks
-      (setq evil-markers-alist
+      (puthash (buffer-name)
+               (cl-delete-if (lambda (m) (member (car m) delmarks))
+                             (gethash (buffer-name) evil-local-marks))
+               evil-local-marks)
+      (setq evil-global-marks-alist
             (cl-delete-if (lambda (m) (member (car m) delmarks))
-                          evil-markers-alist))
-      (set-default 'evil-markers-alist
-                   (cl-delete-if (lambda (m) (member (car m) delmarks))
-                                 (default-value 'evil-markers-alist)))))))
+                          evil-global-marks-alist))))))
 
 (eval-when-compile (require 'ffap))
 (evil-define-command evil-find-file-at-point-with-line ()

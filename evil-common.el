@@ -1894,19 +1894,116 @@ with regard to indentation."
 
 ;;; Markers
 
+(defstruct (evil-mark (:conc-name evil-mark.))
+  (buf (buffer-name))
+  (file buffer-file-name)
+  (pos (point-marker)))
+
+(defun evil-mummified-marks-alist (alist)
+  (mapcar (lambda (pair)
+            (cons (car pair)
+                  (let* ((mark (if (evil-mark-p (cdr pair))
+                                   (copy-evil-mark (cdr pair))
+                                 (cdr pair)))
+                         (pos (ignore-errors (evil-mark.pos mark))))
+                    (when (markerp pos)
+                      (setf (evil-mark.pos mark) (marker-position pos)))
+                    mark)))
+          alist))
+
+;; (puthash "ST.org"
+;;          (loop with lm = (gethash "ST.org" evil-local-marks)
+;;                for el in lm
+;;                when (marker-buffer (evil-mark.pos (cdr el)))
+;;                collect el)
+;;          evil-local-marks)
+
+(defun evil-saveable-local-marks ()
+  (let ((r (make-hash-table :test 'equal)))
+    (maphash (lambda (k v)
+               (when (get-buffer k)
+                 (puthash k (evil-mummified-marks-alist v) r)))
+             evil-local-marks)
+    r))
+
+(defun evil-mummify-markers ()
+  (setq evil-local-marks (evil-saveable-local-marks))
+  (setq evil-global-marks-alist
+        (evil-mummified-marks-alist evil-global-marks-alist)))
+
+(require 'savehist)
+(add-to-list 'savehist-additional-variables 'evil-global-marks-alist)
+(add-to-list 'savehist-additional-variables 'evil-local-marks)
+(add-hook 'savehist-save-hook 'evil-mummify-markers)
+
+(defun evil-revived-mark (mark)
+  (let ((buf (get-buffer (evil-mark.buf mark))))
+    (let ((pos (evil-mark.pos mark)))
+      (unless (markerp pos)
+        (setf (evil-mark.pos mark) (set-marker (make-marker) pos buf))))
+    mark))
+
+(defun evil-revive-marks-alist (alist)
+  (dolist (el alist alist)
+    (when (evil-mark-p (cdr el))
+      (setcdr el (evil-revived-mark (cdr el))))))
+
+(defun evil-revive-buffer-markers ()
+  (let ((bname (buffer-name)))
+    (let ((alist (gethash bname evil-local-marks)))
+      (when alist (evil-revive-marks-alist alist)))
+    (dolist (el evil-global-marks-alist)
+      (and (evil-mark-p (cdr el))
+           (string= bname (evil-mark.buf (cdr el)))
+           (setcdr el (evil-revived-mark (cdr el)))))))
+
+(add-hook 'find-file-hook 'evil-revive-buffer-markers)
+
+(defun evil-restore-markers ()
+  (maphash
+   (lambda (k v)
+     (let ((buf (ignore-errors (get-buffer k))))
+       (when (and buf
+                  (evil-mark-p (cdar v))
+                  (equal (buffer-file-name buf)
+                         (evil-mark.file (cdar v))))
+         (evil-revive-marks-alist v))))
+   evil-local-marks)
+  (evil-revive-marks-alist evil-global-marks-alist))
+
+(add-hook 'savehist-mode-hook 'evil-restore-markers)
+
+(defun evil-read-mark ()
+  (read-char-exclusive
+   (propertize
+    (mapconcat
+     'string
+     (sort
+      (apply 'append
+             (mapcar (apply-partially 'mapcar 'car)
+                     (list  evil-global-marks-alist
+                           (gethash (buffer-name) evil-local-marks))))
+      '<)
+     "")
+    'face 'minibuffer-prompt)))
+
 (defun evil-global-marker-p (char)
   "Whether CHAR denotes a global marker."
   (or (and (>= char ?A) (<= char ?Z))
-      (assq char (default-value 'evil-markers-alist))))
+      (assq char evil-global-marks-alist)))
 
 (defun evil-set-marker (char &optional pos advance)
   "Set the marker denoted by CHAR to position POS.
 POS defaults to the current position of point.
 If ADVANCE is t, the marker advances when inserting text at it;
 otherwise, it stays behind."
-  (interactive (list (read-char)))
+  (interactive (list (evil-read-mark)))
   (catch 'done
-    (let ((marker (evil-get-marker char t)) alist)
+    (let ((mark (cdr (assq char (if (and (<= ?A char) (<= char ?Z))
+                                    evil-global-marks-alist
+                                  (gethash (buffer-name) evil-local-marks)))))
+          (marker (evil-get-marker char t))
+          alist)
       (unless (markerp marker)
         (cond
          ((and marker (symbolp marker) (boundp marker))
@@ -1918,16 +2015,23 @@ otherwise, it stays behind."
          ((functionp marker)
           (user-error "Cannot set special marker `%c'" char))
          ((evil-global-marker-p char)
-          (setq alist (default-value 'evil-markers-alist)
-                marker (make-marker))
+          (setq alist 'evil-global-marks-alist
+                marker (make-evil-mark))
           (evil-add-to-alist 'alist char marker)
-          (setq-default evil-markers-alist alist))
+          (setq evil-global-marks-alist alist))
          (t
-          (setq marker (make-marker))
-          (evil-add-to-alist 'evil-markers-alist char marker))))
+          (setq mark (make-evil-mark))
+          (let* ((marks-alist
+                  (or (gethash (buffer-name) evil-local-marks)
+                      (puthash (buffer-name) (list) evil-local-marks)))
+                 (pair (assq char marks-alist)))
+            (if pair (setcdr pair mark)
+              ;; NB: (let* ((a (list)) (b a)) (push 1 a) b) => nil
+              (push (cons char mark)
+                    (gethash (buffer-name) evil-local-marks)))))))
       (add-hook 'kill-buffer-hook #'evil-swap-out-markers nil t)
-      (set-marker-insertion-type marker advance)
-      (set-marker marker (or pos (point))))))
+      (set-marker-insertion-type (evil-mark.pos mark) advance)
+      (set-marker (evil-mark.pos mark) (or pos (point))))))
 
 (defun evil-get-marker (char &optional raw)
   "Return the marker denoted by CHAR.
@@ -1936,37 +2040,45 @@ a number, a cons cell (FILE . POS) with FILE being a string
 and POS a number, or nil. If RAW is non-nil, then the
 return value may also be a variable, a movement function,
 or a marker object pointing nowhere."
-  (let ((marker (if (evil-global-marker-p char)
-                    (cdr-safe (assq char (default-value
-                                           'evil-markers-alist)))
-                  (cdr-safe (assq char evil-markers-alist)))))
-    (save-excursion
-      (if raw
-          marker
-        (when (and (symbolp marker) (boundp marker))
-          (setq marker (symbol-value marker)))
-        (when (functionp marker)
-          (funcall marker)
-          (setq marker (point)))
-        (when (markerp marker)
-          (if (eq (marker-buffer marker) (current-buffer))
-              (setq marker (marker-position marker))
-            (setq marker (and (marker-buffer marker) marker))))
-        (when (or (numberp marker)
-                  (markerp marker)
-                  (and (consp marker)
-                       (stringp (car marker))
-                       (numberp (cdr marker))))
-          marker)))))
+  (let ((maybe (cdr-safe
+                (assq char (if (evil-global-marker-p char)
+                               evil-global-marks-alist
+                             (gethash (buffer-name) evil-local-marks))))))
+    (when maybe
+      (let ((marker (if (evil-mark-p maybe) (evil-mark.pos maybe) maybe)))
+        (save-excursion
+          (if raw
+              marker
+            (when (and (symbolp marker) (boundp marker))
+              (setq marker (symbol-value marker)))
+            (when (functionp marker)
+              (funcall marker)
+              (setq marker (point)))
+            (when (markerp marker)
+              (if (eq (marker-buffer marker) (current-buffer))
+                  (setq marker (marker-position marker))
+                (setq marker (and (marker-buffer marker) marker))))
+            (when (or (numberp marker)
+                      (markerp marker)
+                      (and (consp marker)
+                           (stringp (car marker))
+                           (numberp (cdr marker))))
+              marker)))))))
 
 (defun evil-swap-out-markers ()
-  "Turn markers into file references when the buffer is killed."
-  (and buffer-file-name
-       (dolist (entry evil-markers-alist)
-         (and (markerp (cdr entry))
-              (eq (marker-buffer (cdr entry)) (current-buffer))
-              (setcdr entry (cons buffer-file-name
-                                  (marker-position (cdr entry))))))))
+  "Cf. `register-swap-out'."
+  (when buffer-file-name
+    (dolist (m (mapcar 'cdr evil-global-marks-alist))
+      (when (evil-mark-p m)
+        (let ((pos (evil-mark.pos m)))
+          (and (markerp pos)
+               (eq (marker-buffer pos) (current-buffer))
+               (setf (evil-mark.pos m) (marker-position pos)))))))
+  (let ((alist (gethash (buffer-name) evil-local-marks)))
+    (when alist
+      (puthash (buffer-name) (evil-mummified-marks-alist alist)
+               evil-local-marks))))
+
 (put 'evil-swap-out-markers 'permanent-local-hook t)
 
 (defun evil-get-register (register &optional noerror)
