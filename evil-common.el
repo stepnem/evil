@@ -1933,13 +1933,13 @@ with regard to indentation."
     r))
 
 (defun evil-mummify-markers ()
-  (setq evil-local-marks (evil-saveable-local-marks))
-  (setq evil-global-marks-alist
+  (setq evil--persistent-local-marks (evil-saveable-local-marks))
+  (setq evil--persistent-global-marks-alist
         (evil-mummified-marks-alist evil-global-marks-alist)))
 
 (require 'savehist)
-(add-to-list 'savehist-additional-variables 'evil-global-marks-alist)
-(add-to-list 'savehist-additional-variables 'evil-local-marks)
+(add-to-list 'savehist-additional-variables 'evil--persistent-global-marks-alist)
+(add-to-list 'savehist-additional-variables 'evil--persistent-local-marks)
 (add-hook 'savehist-save-hook 'evil-mummify-markers)
 
 (defun evil-revived-mark (mark)
@@ -1966,16 +1966,20 @@ with regard to indentation."
 (add-hook 'find-file-hook 'evil-revive-buffer-markers)
 
 (defun evil-restore-markers ()
-  (maphash
-   (lambda (k v)
-     (let ((buf (ignore-errors (get-buffer k))))
-       (when (and buf
-                  (evil-mark-p (cdar v))
-                  (equal (buffer-file-name buf)
-                         (evil-mark.file (cdar v))))
-         (evil-revive-marks-alist v))))
-   evil-local-marks)
-  (evil-revive-marks-alist evil-global-marks-alist))
+  (when (and (hash-table-p evil--persistent-local-marks)
+             (consp evil--persistent-global-marks-alist))
+    (setq evil-local-marks evil--persistent-local-marks)
+    (setq evil-global-marks-alist evil--persistent-global-marks-alist)
+    (maphash
+     (lambda (k v)
+       (let ((buf (ignore-errors (get-buffer k))))
+         (when (and buf
+                    (evil-mark-p (cdar v))
+                    (equal (buffer-file-name buf)
+                           (evil-mark.file (cdar v))))
+           (evil-revive-marks-alist v))))
+     evil-local-marks)
+    (evil-revive-marks-alist evil-global-marks-alist)))
 
 (add-hook 'savehist-mode-hook 'evil-restore-markers)
 
