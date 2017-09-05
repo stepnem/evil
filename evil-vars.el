@@ -1382,8 +1382,10 @@ where STRING is a file path and NUMBER is a buffer position.
 The global value of this variable holds markers available from
 every buffer, while the buffer-local value holds markers available
 only in the current buffer.")
+(defvar evil--persistent-global-marks-alist nil)
 
 (defvar evil-local-marks (make-hash-table :test 'equal))
+(defvar evil--persistent-local-marks nil)
 
 (defconst evil-suppress-map (make-keymap)
   "Full keymap disabling default bindings to `self-insert-command'.")
