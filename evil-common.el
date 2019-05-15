@@ -1900,7 +1900,7 @@ with regard to indentation."
 
 ;;; Markers
 
-(defstruct (evil-mark (:conc-name evil-mark.))
+(cl-defstruct (evil-mark (:conc-name evil-mark.))
   (buf (buffer-name))
   (file buffer-file-name)
   (pos (point-marker)))
